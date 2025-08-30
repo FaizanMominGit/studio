@@ -1,3 +1,4 @@
+
 'use client';
 
 import { Suspense } from 'react';
@@ -14,7 +15,7 @@ import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
-type AttendanceStatus = 'idle' | 'loading_user' | 'validating_token' | 'camera_loading' | 'camera_on' | 'verifying' | 'verified_ok' | 'verified_fail' | 'error';
+type AttendanceStatus = 'idle' | 'loading_user' | 'validating_token' | 'ready_to_verify' | 'verifying' | 'verified_ok' | 'verified_fail' | 'error';
 type AppUser = {
     uid: string;
     email: string;
@@ -44,32 +45,28 @@ function AttendanceProcessor() {
     }
   }, []);
 
-  const handleUserCheck = useCallback(async (user: User | null) => {
-    if (user) {
-        setStatus('loading_user');
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-            const userData = userDoc.data();
-            if (!userData.faceDataUri) {
-                setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
-                setStatus('error');
-                return;
-            }
-            setCurrentUser({ uid: user.uid, ...userData } as AppUser);
-            setStatus('validating_token');
-            setProgress(15);
-        } else {
-            setErrorMessage('Could not find your user profile.');
-            setStatus('error');
-        }
-    } else {
+  const handleUserAndTokenValidation = useCallback(async (user: User | null) => {
+    // 1. Check User
+    if (!user) {
         setErrorMessage('You must be logged in to mark attendance.');
         setStatus('error');
+        return;
     }
-  }, []);
-  
-  const validateToken = useCallback(async () => {
+    setStatus('loading_user');
+    setProgress(10);
+    const userDocRef = doc(db, 'users', user.uid);
+    const userDoc = await getDoc(userDocRef);
+
+    if (!userDoc.exists() || !userDoc.data().faceDataUri) {
+        setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
+        setStatus('error');
+        return;
+    }
+    setCurrentUser({ uid: user.uid, ...userDoc.data() } as AppUser);
+    
+    // 2. Check Token
+    setStatus('validating_token');
+    setProgress(25);
     if (!sessionId || !token) {
         setErrorMessage('Invalid session or QR code. Please scan a valid, live QR code.');
         setStatus('error');
@@ -88,8 +85,9 @@ function AttendanceProcessor() {
             setErrorMessage('The QR code has expired. Please scan the new code from the screen.');
             setStatus('error');
         } else {
-            setStatus('camera_loading');
-            setProgress(25);
+            // Everything is valid
+            setStatus('ready_to_verify');
+            setProgress(50);
         }
     } else {
         setErrorMessage('Session not found.');
@@ -98,35 +96,26 @@ function AttendanceProcessor() {
   }, [sessionId, token]);
 
 
+  // Effect for authenticating and validating the token
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, handleUserCheck);
+    const unsubscribe = onAuthStateChanged(auth, handleUserAndTokenValidation);
     return () => {
       unsubscribe();
       stopCamera();
     };
-  }, [handleUserCheck, stopCamera]);
+  }, [handleUserAndTokenValidation, stopCamera]);
 
+
+  // Effect for managing the camera based on permissions
   useEffect(() => {
-      if (status === 'validating_token') {
-          validateToken();
-      }
-  }, [status, validateToken]);
+    let stream: MediaStream;
 
-
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    const getCameraPermission = async () => {
-      if (status !== 'camera_loading') return;
-      
+    const enableCamera = async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
         setHasCameraPermission(true);
         if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            setStatus('camera_on');
-            setProgress(50);
-        } else {
-             if (stream) stream.getTracks().forEach(track => track.stop());
+          videoRef.current.srcObject = stream;
         }
       } catch (error) {
         console.error('Error accessing camera:', error);
@@ -137,14 +126,15 @@ function AttendanceProcessor() {
       }
     };
 
-    getCameraPermission();
+    enableCamera();
 
     return () => {
+      // This is a more robust way to stop the tracks
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
     };
-  }, [status, toast]);
+  }, [toast]);
 
 
   const takePictureAndVerify = useCallback(async () => {
@@ -226,20 +216,18 @@ function AttendanceProcessor() {
     }
   }, [stopCamera, toast, currentUser, sessionId]);
 
-  const renderContent = () => {
+  const renderStatusInfo = () => {
     switch (status) {
       case 'idle':
       case 'loading_user':
          return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Loading your profile...</p></div>;
       case 'validating_token':
          return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Validating QR Code...</p></div>;
-      case 'camera_loading':
-        return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Starting camera...</p></div>;
-      case 'camera_on':
+      case 'ready_to_verify':
         return (
           <div className="text-center">
             <p className="mb-4 text-muted-foreground text-sm">Position your face in the frame and take a picture to verify.</p>
-            <Button onClick={takePictureAndVerify} size="lg" disabled={!hasCameraPermission}><Camera className="mr-2"/> Verify My Face</Button>
+            <Button onClick={takePictureAndVerify} size="lg" disabled={hasCameraPermission === false}><Camera className="mr-2"/> Verify My Face</Button>
           </div>
         );
       case 'verifying':
@@ -267,7 +255,7 @@ function AttendanceProcessor() {
     }
   };
   
-  const showVideo = status === 'camera_on' || status === 'verifying' || status === 'camera_loading';
+  const showVideo = hasCameraPermission && (status === 'ready_to_verify' || status === 'verifying');
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
@@ -277,10 +265,12 @@ function AttendanceProcessor() {
           <CardDescription>Session ID: {sessionId || 'Loading...'}</CardDescription>
         </CardHeader>
         <CardContent className="min-h-[400px] flex flex-col items-center justify-center space-y-4">
-            <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 border-primary ${!showVideo && 'p-4'}`}>
-                <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${!showVideo && 'hidden'}`} />
-                {!showVideo && renderContent()}
+            {/* The video element is always rendered to prevent issues with attaching the stream */}
+            <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 border-primary ${!showVideo ? 'p-4' : ''}`}>
+                <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${!showVideo ? 'hidden' : ''}`} />
+                {!showVideo && renderStatusInfo()}
             </div>
+
             {hasCameraPermission === false && (
                  <Alert variant="destructive">
                      <AlertTitle>Camera Access Denied</AlertTitle>
@@ -289,7 +279,8 @@ function AttendanceProcessor() {
                      </AlertDescription>
                  </Alert>
             )}
-             {showVideo && <div className="pt-4">{renderContent()}</div>}
+
+            {showVideo && <div className="pt-4">{renderStatusInfo()}</div>}
 
         </CardContent>
         <CardFooter className="flex flex-col">
@@ -308,3 +299,5 @@ export default function AttendPage() {
         </Suspense>
     )
 }
+
+    
