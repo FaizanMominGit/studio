@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { db, auth } from '@/lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,7 +20,7 @@ type Session = {
     year: string;
     division: string;
     attendedStudents: any[];
-    createdAt: string; // Added for sorting
+    createdAt: string;
 };
 
 export function PastSessionsList() {
@@ -30,13 +30,14 @@ export function PastSessionsList() {
     const router = useRouter();
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
+        const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
             setCurrentUser(user);
             if (!user) {
+                setSessions([]);
                 setLoading(false);
             }
         });
-        return () => unsubscribe();
+        return () => unsubscribeAuth();
     }, []);
 
     useEffect(() => {
@@ -44,27 +45,23 @@ export function PastSessionsList() {
 
         const sessionsQuery = query(
             collection(db, 'sessions'),
-            where('professorId', '==', currentUser.uid)
+            where('professorId', '==', currentUser.uid),
+            orderBy('createdAt', 'desc')
         );
 
-        const unsubscribe = onSnapshot(sessionsQuery, (snapshot) => {
+        const unsubscribeSnapshot = onSnapshot(sessionsQuery, (snapshot) => {
             const sessionsData = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data(),
             })) as Session[];
-
-            // Sort on the client-side to avoid needing a composite index
-            sessionsData.sort((a, b) => {
-                const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                return dateB - dateA;
-            });
-
             setSessions(sessionsData);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error fetching sessions:", error);
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => unsubscribeSnapshot();
     }, [currentUser]);
 
     const handleSessionClick = (session: Session) => {
@@ -90,7 +87,7 @@ export function PastSessionsList() {
     }
 
     if (sessions.length === 0) {
-        return <p className="text-muted-foreground text-center">You haven't created any lecture sessions yet.</p>;
+        return <p className="text-muted-foreground text-center py-8">You haven't created any lecture sessions yet.</p>;
     }
 
     return (
@@ -98,14 +95,14 @@ export function PastSessionsList() {
             {sessions.map((session) => (
                 <Card 
                     key={session.id} 
-                    className="cursor-pointer hover:shadow-md transition-shadow"
+                    className="cursor-pointer hover:shadow-md transition-shadow flex flex-col"
                     onClick={() => handleSessionClick(session)}
                 >
                     <CardHeader>
                         <CardTitle className="truncate">{session.subject}</CardTitle>
                         <CardDescription>{session.department} - {session.year}</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-3">
+                    <CardContent className="space-y-3 flex-grow">
                         <div className="flex items-center text-sm text-muted-foreground">
                             <Calendar className="mr-2 h-4 w-4" />
                             <span>{format(new Date(session.lectureDate), 'PPP')}</span>
@@ -119,8 +116,9 @@ export function PastSessionsList() {
                             <span>{session.attendedStudents.length} student(s) attended</span>
                         </div>
                     </CardContent>
-                    <div className="p-6 pt-0 flex justify-end">
-                        <ArrowRight className="h-5 w-5 text-primary" />
+                    <div className="p-6 pt-0 flex justify-end items-center">
+                         <span className="text-xs text-muted-foreground">View Details</span>
+                        <ArrowRight className="h-5 w-5 text-primary ml-2" />
                     </div>
                 </Card>
             ))}

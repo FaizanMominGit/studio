@@ -126,8 +126,7 @@ function AttendanceProcessor() {
             setStatus('camera_on');
             setProgress(50);
         } else {
-            // This case might happen if the component unmounts quickly
-             stream.getTracks().forEach(track => track.stop());
+             if (stream) stream.getTracks().forEach(track => track.stop());
         }
       } catch (error) {
         console.error('Error accessing camera:', error);
@@ -197,17 +196,19 @@ function AttendanceProcessor() {
                             const userDocRef = doc(db, 'users', currentUser.uid);
                             const sessionDetails = sessionDoc.data();
                              const userDoc = await getDoc(userDocRef);
-                             const userAttendanceHistory = userDoc.data()?.attendanceHistory || [];
-                             if(!userAttendanceHistory.some((h: any) => h.sessionId === sessionId)) {
-                                await updateDoc(userDocRef, {
-                                  attendanceHistory: arrayUnion({
-                                    sessionId,
-                                    subject: sessionDetails?.subject || 'Unknown Subject',
-                                    date: sessionDetails?.lectureDate || new Date().toISOString(),
-                                    status: 'Present'
-                                  })
-                                });
-                            }
+                             if (userDoc.exists()) {
+                                const userAttendanceHistory = userDoc.data()?.attendanceHistory || [];
+                                if(!userAttendanceHistory.some((h: any) => h.sessionId === sessionId)) {
+                                    await updateDoc(userDocRef, {
+                                    attendanceHistory: arrayUnion({
+                                        sessionId,
+                                        subject: sessionDetails?.subject || 'Unknown Subject',
+                                        date: sessionDetails?.lectureDate || new Date().toISOString(),
+                                        status: 'Present'
+                                    })
+                                    });
+                                }
+                             }
                         }
                     }
 

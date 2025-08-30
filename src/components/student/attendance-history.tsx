@@ -7,11 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { auth, db } from '@/lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { doc, onSnapshot, DocumentData } from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { Skeleton } from '../ui/skeleton';
 
 type AttendanceRecord = {
+  sessionId: string;
   subject: string;
   date: string;
   status: 'Present' | 'Absent';
@@ -22,22 +23,29 @@ export function AttendanceHistory() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user: User | null) => {
       if (user) {
         const userDocRef = doc(db, 'users', user.uid);
         const unsubscribeSnapshot = onSnapshot(userDocRef, (doc) => {
           if (doc.exists()) {
-            const userData = doc.data();
-            const attendanceData = userData.attendanceHistory || [];
+            const userData = doc.data() as DocumentData;
+            const attendanceData: any[] = userData.attendanceHistory || [];
             
-            const formattedHistory = attendanceData.map((item: any) => ({
+            const formattedHistory: AttendanceRecord[] = attendanceData.map((item: any) => ({
+                sessionId: item.sessionId,
                 subject: item.subject,
                 date: new Date(item.date).toLocaleDateString(),
                 status: item.status,
-            })).reverse(); // show most recent first
+            })).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
             setHistory(formattedHistory);
+          } else {
+            setHistory([]);
           }
           setLoading(false);
+        }, (error) => {
+            console.error("Error fetching attendance history: ", error);
+            setLoading(false);
         });
          return () => unsubscribeSnapshot();
       } else {
@@ -59,20 +67,20 @@ export function AttendanceHistory() {
         <ScrollArea className="h-96">
           <div className="space-y-4 pr-4">
             {loading ? (
-              <>
+              <div className="space-y-4">
                 <Skeleton className="h-12 w-full" />
                 <Skeleton className="h-12 w-full" />
                 <Skeleton className="h-12 w-full" />
-              </>
+              </div>
             ) : history.length > 0 ? (
               history.map((item, index) => (
-                <div key={index}>
+                <div key={item.sessionId || index}>
                   <div className="flex justify-between items-center">
                     <div>
                       <p className="font-medium">{item.subject}</p>
                       <p className="text-sm text-muted-foreground">{item.date}</p>
                     </div>
-                    <Badge variant={item.status === 'Present' ? 'default' : 'destructive'} className={item.status === 'Present' ? 'bg-green-500' : ''}>
+                    <Badge variant={item.status === 'Present' ? 'default' : 'destructive'} className={item.status === 'Present' ? 'bg-green-500 hover:bg-green-500/80' : ''}>
                       {item.status}
                     </Badge>
                   </div>

@@ -27,7 +27,6 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
   const [enrollmentMessage, setEnrollmentMessage] = useState('');
-  const [hasEnrolledFace, setHasEnrolledFace] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
 
   const stopCamera = useCallback(() => {
@@ -48,8 +47,8 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
         setHasCameraPermission(true);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          setStatus('camera_on');
         }
-        setStatus('camera_on');
       } catch (error) {
         console.error("Error accessing camera: ", error);
         setHasCameraPermission(false);
@@ -76,13 +75,13 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
 
     const unsubscribe = onAuthStateChanged(auth, async (user: User | null) => {
       if (user) {
+        setStatus('checking_status');
         const userDocRef = doc(db, 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
           const userData = userDoc.data();
           setCurrentUser({ uid: user.uid, ...userData });
           if (userData.faceDataUri) {
-            setHasEnrolledFace(true);
             setStatus('enrolled');
             setImageSrc(userData.faceDataUri);
           } else {
@@ -95,7 +94,6 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
         }
       } else {
         setStatus('idle');
-        setHasEnrolledFace(false);
       }
     });
 
@@ -153,7 +151,6 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
                 description: "Your new face data has been saved.",
             });
             setStatus('enrolled');
-            setHasEnrolledFace(true);
 
         } catch (error: any) {
             console.error("Re-enrollment failed:", error);
@@ -170,13 +167,12 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
 
   const resetForReEnrollment = () => {
     setImageSrc(null);
-    setHasEnrolledFace(false);
     setStatus('needs_enrollment');
     setEnrollmentMessage('');
     startCamera();
   };
 
-  if (status === 'checking_status') {
+  if (status === 'checking_status' && !isPartOfRegistration) {
     return (
         <Card>
             <CardHeader>
