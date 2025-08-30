@@ -45,65 +45,67 @@ function AttendanceProcessor() {
     }
   }, []);
 
-  const handleUserAndTokenValidation = useCallback(async (user: User | null) => {
-    // 1. Check User
-    if (!user) {
-        setErrorMessage('You must be logged in to mark attendance.');
-        setStatus('error');
-        return;
-    }
-    setStatus('loading_user');
-    setProgress(10);
-    const userDocRef = doc(db, 'users', user.uid);
-    const userDoc = await getDoc(userDocRef);
+  const handleSessionValidation = useCallback(async (user: AppUser) => {
+      setStatus('validating_token');
+      setProgress(25);
+      if (!sessionId || !token) {
+          setErrorMessage('Invalid session or QR code. Please scan a valid, live QR code.');
+          setStatus('error');
+          return;
+      }
 
-    if (!userDoc.exists() || !userDoc.data().faceDataUri) {
-        setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
-        setStatus('error');
-        return;
-    }
-    setCurrentUser({ uid: user.uid, ...userDoc.data() } as AppUser);
-    
-    // 2. Check Token
-    setStatus('validating_token');
-    setProgress(25);
-    if (!sessionId || !token) {
-        setErrorMessage('Invalid session or QR code. Please scan a valid, live QR code.');
-        setStatus('error');
-        return;
-    }
+      const sessionDocRef = doc(db, 'sessions', sessionId);
+      const sessionDoc = await getDoc(sessionDocRef);
 
-    const sessionDocRef = doc(db, 'sessions', sessionId);
-    const sessionDoc = await getDoc(sessionDocRef);
-
-    if (sessionDoc.exists()) {
-        const sessionData = sessionDoc.data();
-        if (!sessionData.active) {
-            setErrorMessage('This session has already ended.');
-            setStatus('error');
-        } else if (sessionData.qrToken !== token) {
-            setErrorMessage('The QR code has expired. Please scan the new code from the screen.');
-            setStatus('error');
-        } else {
-            // Everything is valid
-            setStatus('ready_to_verify');
-            setProgress(50);
-        }
-    } else {
-        setErrorMessage('Session not found.');
-        setStatus('error');
-    }
+      if (sessionDoc.exists()) {
+          const sessionData = sessionDoc.data();
+          if (!sessionData.active) {
+              setErrorMessage('This session has already ended.');
+              setStatus('error');
+          } else if (sessionData.qrToken !== token) {
+              setErrorMessage('The QR code has expired. Please scan the new code from the screen.');
+              setStatus('error');
+          } else {
+              setStatus('ready_to_verify');
+              setProgress(50);
+          }
+      } else {
+          setErrorMessage('Session not found.');
+          setStatus('error');
+      }
   }, [sessionId, token]);
 
 
   // Effect for authenticating and validating the token
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, handleUserAndTokenValidation);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            setStatus('loading_user');
+            setProgress(10);
+            const userDocRef = doc(db, 'users', user.uid);
+            const userDoc = await getDoc(userDocRef);
+
+            if (!userDoc.exists() || !userDoc.data().faceDataUri) {
+                setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
+                setStatus('error');
+                return;
+            }
+            const appUser = { uid: user.uid, ...userDoc.data() } as AppUser;
+            setCurrentUser(appUser);
+            await handleSessionValidation(appUser);
+        } else {
+             // This might briefly be null on initial load, so we wait for auth state to be confirmed
+             if(auth.currentUser === null) {
+                setErrorMessage('You must be logged in to mark attendance.');
+                setStatus('error');
+             }
+        }
+    });
     return () => {
       unsubscribe();
       stopCamera();
     };
-  }, [handleUserAndTokenValidation, stopCamera]);
+  }, [handleSessionValidation, stopCamera]);
 
 
   // Effect for managing the camera based on permissions
@@ -129,7 +131,6 @@ function AttendanceProcessor() {
     enableCamera();
 
     return () => {
-      // This is a more robust way to stop the tracks
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
@@ -220,7 +221,7 @@ function AttendanceProcessor() {
     switch (status) {
       case 'idle':
       case 'loading_user':
-         return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Loading your profile...</p></div>;
+         return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Authenticating...</p></div>;
       case 'validating_token':
          return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Validating QR Code...</p></div>;
       case 'ready_to_verify':
@@ -265,7 +266,6 @@ function AttendanceProcessor() {
           <CardDescription>Session ID: {sessionId || 'Loading...'}</CardDescription>
         </CardHeader>
         <CardContent className="min-h-[400px] flex flex-col items-center justify-center space-y-4">
-            {/* The video element is always rendered to prevent issues with attaching the stream */}
             <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 border-primary ${!showVideo ? 'p-4' : ''}`}>
                 <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${!showVideo ? 'hidden' : ''}`} />
                 {!showVideo && renderStatusInfo()}
