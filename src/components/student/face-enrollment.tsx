@@ -67,7 +67,6 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
   }, [toast]);
 
   useEffect(() => {
-    // This effect handles checking the user's enrollment status if they are already logged in.
     if (isPartOfRegistration) {
       if(status === 'needs_enrollment'){
          startCamera();
@@ -95,7 +94,7 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
           setEnrollmentMessage('Could not find user profile.');
         }
       } else {
-        setStatus('idle'); // No user logged in
+        setStatus('idle');
         setHasEnrolledFace(false);
       }
     });
@@ -240,7 +239,7 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
       )}
       <CardContent className="flex flex-col items-center justify-center">
         <div className="w-64 h-64 rounded-lg bg-secondary flex items-center justify-center overflow-hidden border">
-           {(status === 'camera_on' || status === 'picture_taken' || status === 'enrolling') && <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${imageSrc ? 'hidden' : 'block'}`} />}
+           <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${imageSrc || status !== 'camera_on' ? 'hidden' : 'block'}`} />
            {imageSrc && <img src={imageSrc} alt="Student snapshot" className="w-full h-full object-cover" />}
            {(status === 'camera_loading' || status === 'enrolling' || status === 'idle' || status === 'checking_status') && <Loader2 className="w-16 h-16 text-muted-foreground animate-spin" />}
            {(status === 'no_camera' || status === 'enrollment_failed') && <AlertTriangle className="w-16 h-16 text-destructive" />}

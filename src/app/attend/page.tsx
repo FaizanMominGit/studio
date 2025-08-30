@@ -115,30 +115,28 @@ function AttendanceProcessor() {
 
   useEffect(() => {
     const getCameraPermission = async () => {
-        if (status === 'camera_loading') {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-                setHasCameraPermission(true);
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
-                }
-                setStatus('camera_on');
-                setProgress(50);
-            } catch (error) {
-                console.error('Error accessing camera:', error);
-                setHasCameraPermission(false);
-                setErrorMessage('Camera access was denied. Please enable permissions in your browser settings.');
-                setStatus('error');
-                toast({ variant: 'destructive', title: 'Camera Error', description: 'Could not access camera. Please enable permissions.' });
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            setHasCameraPermission(true);
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
             }
+            setStatus('camera_on');
+            setProgress(50);
+        } catch (error) {
+            console.error('Error accessing camera:', error);
+            setHasCameraPermission(false);
+            setErrorMessage('Camera access was denied. Please enable permissions in your browser settings.');
+            setStatus('error');
+            toast({ variant: 'destructive', title: 'Camera Error', description: 'Could not access camera. Please enable permissions.' });
         }
     };
+    
+    if (status === 'camera_loading') {
+        getCameraPermission();
+    }
 
-    getCameraPermission();
-
-    // The return function from useEffect will run on component unmount
     return () => {
-        // Ensure the camera is stopped if the component unmounts for any reason
         if (videoRef.current && videoRef.current.srcObject) {
             (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
         }
@@ -274,9 +272,7 @@ function AttendanceProcessor() {
         </CardHeader>
         <CardContent className="min-h-[400px] flex flex-col items-center justify-center space-y-4">
             <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 border-primary ${!showVideo && 'p-4'}`}>
-                 {/* Always render the video tag to ensure ref is available */}
                 <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${!showVideo && 'hidden'}`} />
-                 {/* Show a placeholder when video is not active */}
                 {!showVideo && renderContent()}
             </div>
             {hasCameraPermission === false && status !== 'error' && (
@@ -287,7 +283,6 @@ function AttendanceProcessor() {
                      </AlertDescription>
                  </Alert>
             )}
-             {/* Render content outside the video circle only when video is not supposed to be shown */}
              {showVideo && <div className="pt-4">{renderContent()}</div>}
 
         </CardContent>
@@ -307,5 +302,3 @@ export default function AttendPage() {
         </Suspense>
     )
 }
-
-    
