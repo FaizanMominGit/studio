@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
 config();
 
-import '@/ai/flows/validate-name-input.ts';
+import '@/ai/flows/enroll-face.ts';
+import '@/ai/flows/verify-face.ts';

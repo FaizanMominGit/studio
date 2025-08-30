@@ -2,6 +2,13 @@ import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
   /* config options here */
+  devIndicators: {
+    allowedDevOrigins: [
+      '*.cloudworkstations.dev',
+      '*.firebase.studio',
+    ],
+    buildActivity: false,
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -18,9 +25,9 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: 'https',
-        hostname: 'picsum.photos',
+        hostname: 'api.qrserver.com',
         port: '',
-        pathname: '/**',
+        pathname: '/v1/create-qr-code/**',
       },
     ],
   },
