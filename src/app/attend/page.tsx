@@ -1,4 +1,3 @@
-
 'use client';
 
 import { Suspense } from 'react';
@@ -30,7 +29,7 @@ function AttendanceProcessor() {
   const token = searchParams.get('token');
   const { toast } = useToast();
 
-  const [status, setStatus] = useState<AttendanceStatus>('loading_user');
+  const [status, setStatus] = useState<AttendanceStatus>('idle');
   const [progress, setProgress] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -44,9 +43,10 @@ function AttendanceProcessor() {
       videoRef.current.srcObject = null;
     }
   }, []);
-  
+
   const handleUserCheck = useCallback(async (user: User | null) => {
     if (user) {
+        setStatus('loading_user');
         const userDocRef = doc(db, 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
@@ -114,33 +114,37 @@ function AttendanceProcessor() {
 
 
   useEffect(() => {
+    let stream: MediaStream | null = null;
     const getCameraPermission = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-            setHasCameraPermission(true);
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-            }
+      if (status !== 'camera_loading') return;
+      
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        setHasCameraPermission(true);
+        if (videoRef.current) {
+            videoRef.current.srcObject = stream;
             setStatus('camera_on');
             setProgress(50);
-        } catch (error) {
-            console.error('Error accessing camera:', error);
-            setHasCameraPermission(false);
-            setErrorMessage('Camera access was denied. Please enable permissions in your browser settings.');
-            setStatus('error');
-            toast({ variant: 'destructive', title: 'Camera Error', description: 'Could not access camera. Please enable permissions.' });
+        } else {
+            // This case might happen if the component unmounts quickly
+             stream.getTracks().forEach(track => track.stop());
         }
+      } catch (error) {
+        console.error('Error accessing camera:', error);
+        setHasCameraPermission(false);
+        setErrorMessage('Camera access was denied. Please enable permissions in your browser settings.');
+        setStatus('error');
+        toast({ variant: 'destructive', title: 'Camera Error', description: 'Could not access camera. Please enable permissions.' });
+      }
     };
-    
-    if (status === 'camera_loading') {
-        getCameraPermission();
-    }
+
+    getCameraPermission();
 
     return () => {
-        if (videoRef.current && videoRef.current.srcObject) {
-            (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-        }
-    }
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
   }, [status, toast]);
 
 
@@ -223,6 +227,7 @@ function AttendanceProcessor() {
 
   const renderContent = () => {
     switch (status) {
+      case 'idle':
       case 'loading_user':
          return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Loading your profile...</p></div>;
       case 'validating_token':
@@ -275,7 +280,7 @@ function AttendanceProcessor() {
                 <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${!showVideo && 'hidden'}`} />
                 {!showVideo && renderContent()}
             </div>
-            {hasCameraPermission === false && status !== 'error' && (
+            {hasCameraPermission === false && (
                  <Alert variant="destructive">
                      <AlertTitle>Camera Access Denied</AlertTitle>
                      <AlertDescription>
