@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { useRouter } from 'next/navigation';
 
 const qrcodeRegionId = "html5qr-code-full-region";
@@ -13,39 +13,36 @@ type QrScannerProps = {
 
 export function QrScanner({ onScanSuccess }: QrScannerProps) {
     const router = useRouter();
-    // Use a ref to hold the Html5Qrcode instance to prevent re-initialization
-    const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+    const scannerRef = useRef<Html5Qrcode | null>(null);
 
     useEffect(() => {
-        // Initialize the scanner only once
-        if (!html5QrCodeRef.current) {
-          html5QrCodeRef.current = new Html5Qrcode(qrcodeRegionId);
+        // Initialize the scanner
+        if (!scannerRef.current) {
+            scannerRef.current = new Html5Qrcode(qrcodeRegionId);
         }
-        const html5QrCode = html5QrCodeRef.current;
-        
-        const qrCodeSuccessCallback = (decodedText: string) => {
-            // Ensure we don't process multiple scans
-            if (html5QrCode.getState() !== Html5QrcodeScannerState.SCANNING) {
-                return;
-            }
+        const html5QrCode = scannerRef.current;
+        let isScanning = true;
 
-            // Stop the scanner first
+        const qrCodeSuccessCallback = (decodedText: string) => {
+            if (!isScanning) return;
+            isScanning = false; // Prevent multiple triggers
+
             html5QrCode.stop().then(() => {
-                // Validate and navigate
                 try {
                     const url = new URL(decodedText);
+                    // Basic validation for the URL
                     if (url.pathname.includes('/attend') && url.searchParams.has('sessionId')) {
-                        onScanSuccess();
-                        router.push(decodedText);
+                        onScanSuccess(); // Close the dialog
+                        router.push(decodedText); // Navigate
                     } else {
                         console.warn("Scanned QR code is not a valid attendance link:", decodedText);
-                        // Optionally restart scanning or show an error
+                        // Optionally restart or show an error
                     }
                 } catch (e) {
-                     console.warn("Scanned content is not a valid URL:", decodedText);
+                     console.error("Scanned content is not a valid URL:", decodedText, e);
                 }
             }).catch(err => {
-                console.error("Failed to stop scanner:", err);
+                console.error("Failed to stop scanner after success:", err);
             });
         };
 
@@ -55,25 +52,20 @@ export function QrScanner({ onScanSuccess }: QrScannerProps) {
             supportedScanTypes: [] // Disable file-based scanning
         };
 
-        // Start scanning
         html5QrCode.start(
             { facingMode: "environment" },
             config,
             qrCodeSuccessCallback,
             undefined // Optional error callback
         ).catch(err => {
-            console.error("Unable to start scanning with environment camera.", err);
-            // Fallback to any camera if the back camera fails
-            html5QrCode.start({}, config, qrCodeSuccessCallback, undefined)
-                .catch(err => console.error("Failed to start scanner with any camera", err));
+            console.error("Unable to start scanning.", err);
         });
 
         // Cleanup function to stop the scanner on component unmount
         return () => {
             if (html5QrCode && html5QrCode.isScanning) {
                 html5QrCode.stop().catch(error => {
-                    // This can sometimes fail if the component unmounts too quickly, so we log instead of throwing
-                    console.log("Cleanup failed to stop scanner, it might have already been stopped.", error);
+                    console.log("Cleanup failed to stop scanner.", error);
                 });
             }
         };
