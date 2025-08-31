@@ -20,7 +20,7 @@ import { Loader2 } from 'lucide-react';
 import { FaceEnrollment } from '@/components/student/face-enrollment';
 import { useState } from 'react';
 
-const QrScanner = dynamic(() => import('@/components/student/qr-scanner').then(mod => mod.QrScanner), {
+const ManualQrScanner = dynamic(() => import('@/components/student/manual-qr-scanner').then(mod => mod.ManualQrScanner), {
   ssr: false,
   loading: () => <div className="flex items-center justify-center h-48"><Loader2 className="h-8 w-8 animate-spin" /></div>
 });
@@ -32,6 +32,11 @@ export default function StudentDashboard() {
   const handleLogout = () => {
     // In a real app, you would sign out from Firebase here
     router.push('/');
+  };
+  
+  const handleScanSuccess = (url: string) => {
+    setIsQrDialogOpen(false);
+    router.push(url);
   };
 
   return (
@@ -71,7 +76,7 @@ export default function StudentDashboard() {
                               </DialogDescription>
                             </DialogHeader>
                             {/* Render scanner only when dialog is open to ensure camera is requested correctly */}
-                            {isQrDialogOpen && <QrScanner onScanSuccess={() => setIsQrDialogOpen(false)} />}
+                            {isQrDialogOpen && <ManualQrScanner onScanSuccess={handleScanSuccess} />}
                           </DialogContent>
                         </Dialog>
                     </CardContent>
