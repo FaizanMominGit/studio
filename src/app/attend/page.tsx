@@ -166,42 +166,49 @@ function AttendancePageContent() {
         setProgress(100);
         toast({ title: 'Attendance Marked!', description: `Confidence: ${(result.confidence * 100).toFixed(2)}%` });
 
-        if (sessionId) {
-          const sessionDocRef = doc(db, 'sessions', sessionId);
-          const studentData = {
-            uid: user.uid,
-            email: user.email,
-            name: user.name || user.email.split('@')[0],
-            rollNo: user.rollNo || 'N/A',
-            checkInTime: new Date().toISOString(),
-            verificationPhoto: dataUrl,
-          };
+        try {
+            if (sessionId) {
+              const sessionDocRef = doc(db, 'sessions', sessionId);
+              const studentData = {
+                uid: user.uid,
+                email: user.email,
+                name: user.name || user.email.split('@')[0],
+                rollNo: user.rollNo || 'N/A',
+                checkInTime: new Date().toISOString(),
+                verificationPhoto: dataUrl,
+              };
 
-          const sessionDoc = await getDoc(sessionDocRef);
-          if (sessionDoc.exists()) {
-            const attendedStudents = sessionDoc.data()?.attendedStudents || [];
-            if (!attendedStudents.some((s: any) => s.uid === user.uid)) {
-              await updateDoc(sessionDocRef, { attendedStudents: arrayUnion(studentData) });
-            }
+              const sessionDoc = await getDoc(sessionDocRef);
+              if (sessionDoc.exists()) {
+                const attendedStudents = sessionDoc.data()?.attendedStudents || [];
+                if (!attendedStudents.some((s: any) => s.uid === user.uid)) {
+                  await updateDoc(sessionDocRef, { attendedStudents: arrayUnion(studentData) });
+                }
 
-            const userDocRef = doc(db, 'users', user.uid);
-            const sessionDetails = sessionDoc.data();
-            const userDoc = await getDoc(userDocRef);
-            if (userDoc.exists()) {
-              const userAttendanceHistory = userDoc.data()?.attendanceHistory || [];
-              if (!userAttendanceHistory.some((h: any) => h.sessionId === sessionId)) {
-                await updateDoc(userDocRef, {
-                  attendanceHistory: arrayUnion({
-                    sessionId,
-                    subject: sessionDetails?.subject || 'Unknown Subject',
-                    date: sessionDetails?.lectureDate || new Date().toISOString(),
-                    status: 'Present',
-                  }),
-                });
+                const userDocRef = doc(db, 'users', user.uid);
+                const sessionDetails = sessionDoc.data();
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists()) {
+                  const userAttendanceHistory = userDoc.data()?.attendanceHistory || [];
+                  if (!userAttendanceHistory.some((h: any) => h.sessionId === sessionId)) {
+                    await updateDoc(userDocRef, {
+                      attendanceHistory: arrayUnion({
+                        sessionId,
+                        subject: sessionDetails?.subject || 'Unknown Subject',
+                        date: sessionDetails?.lectureDate || new Date().toISOString(),
+                        status: 'Present',
+                      }),
+                    });
+                  }
+                }
               }
             }
-          }
+        } catch (dbError: any) {
+            console.error("Database update failed:", dbError);
+            setStatus('error');
+            setErrorMessage('Could not save attendance record to the database. Please contact your professor.');
         }
+
       } else {
         setStatus('failure');
         setErrorMessage(result.reason || 'Verification failed. The faces did not match.');
@@ -290,5 +297,3 @@ export default function AttendPage() {
         </Suspense>
     )
 }
-
-    
