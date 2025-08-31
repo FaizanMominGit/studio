@@ -1,9 +1,8 @@
 
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, Camera, CheckCircle, XCircle, UserCheck } from 'lucide-react';
@@ -13,7 +12,6 @@ import { verifyFace } from '@/ai/flows/verify-face';
 import { auth, db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
 type AppUser = {
     uid: string;
@@ -23,7 +21,7 @@ type AppUser = {
     name: string;
 };
 
-function AttendancePageContent() {
+function AttendanceProcessor() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('sessionId');
   const token = searchParams.get('token');
@@ -49,37 +47,48 @@ function AttendancePageContent() {
   }, []);
 
   useEffect(() => {
-    // This effect handles the entire lifecycle: auth -> session -> camera
+    // This effect only handles authentication.
     setStatusMessage('Authenticating...');
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
-      if (!firebaseUser) {
+      if (firebaseUser) {
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists() && userDoc.data().faceDataUri) {
+          setCurrentUser({ uid: firebaseUser.uid, ...userDoc.data() } as AppUser);
+        } else {
+          setErrorMessage('You must be logged in and have an enrolled face to mark attendance.');
+          setIsLoading(false);
+        }
+      } else {
         setErrorMessage('You must be logged in to mark attendance.');
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      stopCamera();
+    };
+  }, [stopCamera]);
+
+  useEffect(() => {
+    // This effect handles session validation and camera, but only runs when we have a user.
+    if (!currentUser) {
+      return;
+    }
+
+    async function validateSessionAndStartCamera() {
+      setStatusMessage('Validating Session...');
+      if (!sessionId || !token) {
+        setErrorMessage('Invalid session link. Please scan a valid QR code.');
         setIsLoading(false);
         return;
       }
       
       try {
-        // Step 1: Fetch user data
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (!userDoc.exists() || !userDoc.data().faceDataUri) {
-          setErrorMessage('You must be logged in and have an enrolled face to mark attendance.');
-          setIsLoading(false);
-          return;
-        }
-        const authenticatedUser = { uid: firebaseUser.uid, ...userDoc.data() } as AppUser;
-        setCurrentUser(authenticatedUser);
-
-        // Step 2: Validate the session
-        setStatusMessage('Validating Session...');
-        if (!sessionId || !token) {
-          setErrorMessage('Invalid session link. Please scan a valid QR code.');
-          setIsLoading(false);
-          return;
-        }
-        
         const sessionDocRef = doc(db, 'sessions', sessionId);
         const sessionDoc = await getDoc(sessionDocRef);
+
         if (!sessionDoc.exists()) {
           setErrorMessage('Session not found.');
         } else {
@@ -104,18 +113,16 @@ function AttendancePageContent() {
           }
         }
       } catch (e: any) {
-        console.error("Error during setup:", e);
+        console.error("Error during session validation:", e);
         setErrorMessage('An error occurred during initialization.');
       } finally {
-        setIsLoading(false); // All checks are done
+        setIsLoading(false);
       }
-    });
+    }
 
-    return () => {
-        unsubscribe();
-        stopCamera();
-    };
-  }, [sessionId, token, stopCamera]);
+    validateSessionAndStartCamera();
+
+  }, [currentUser, sessionId, token]);
 
 
   const takePictureAndVerify = useCallback(async () => {
@@ -270,7 +277,9 @@ function AttendancePageContent() {
 export default function AttendPage() {
     return (
         <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><Loader2 className="h-12 w-12 animate-spin"/></div>}>
-            <AttendancePageContent />
+            <AttendanceProcessor />
         </Suspense>
     )
 }
+
+    
