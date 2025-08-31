@@ -66,42 +66,51 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
   }, [toast]);
 
   useEffect(() => {
+    // If this is part of registration, just start the camera and wait for user action.
     if (isPartOfRegistration) {
-      if(status === 'needs_enrollment'){
-         startCamera();
-      }
+      startCamera();
       return;
     }
 
+    // For existing users, check their enrollment status.
     const unsubscribe = onAuthStateChanged(auth, async (user: User | null) => {
       if (user) {
         setStatus('checking_status');
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setCurrentUser({ uid: user.uid, ...userData });
-          if (userData.faceDataUri) {
-            setStatus('enrolled');
-            setImageSrc(userData.faceDataUri);
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setCurrentUser({ uid: user.uid, ...userData });
+            if (userData.faceDataUri) {
+              setStatus('enrolled');
+              setImageSrc(userData.faceDataUri);
+            } else {
+              setStatus('needs_enrollment');
+              startCamera(); // Start camera for users who need to enroll
+            }
           } else {
-            setStatus('needs_enrollment');
-            startCamera();
+            setStatus('enrollment_failed');
+            setEnrollmentMessage('Could not find your user profile.');
           }
-        } else {
-          setStatus('enrollment_failed');
-          setEnrollmentMessage('Could not find user profile.');
+        } catch (error) {
+           setStatus('enrollment_failed');
+           setEnrollmentMessage('Failed to fetch user data.');
         }
       } else {
+        // No user is logged in.
         setStatus('idle');
+        setCurrentUser(null);
       }
     });
 
     return () => {
-        unsubscribe();
-        stopCamera();
-    }
-  }, [isPartOfRegistration, startCamera, stopCamera, status]);
+      unsubscribe();
+      stopCamera();
+    };
+  // The dependency array is carefully constructed to run this logic only when needed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPartOfRegistration]);
 
 
   const takePicture = useCallback(() => {
@@ -127,43 +136,50 @@ export function FaceEnrollment({ onEnrollmentComplete, isPartOfRegistration = fa
     if (!imageSrc) return;
     setStatus('enrolling');
 
-    if (isPartOfRegistration && onEnrollmentComplete) {
-        onEnrollmentComplete(imageSrc);
-        return;
-    }
+    try {
+        // This handles the case where the component is part of the initial registration flow.
+        if (isPartOfRegistration && onEnrollmentComplete) {
+            onEnrollmentComplete(imageSrc);
+            return; // onEnrollmentComplete will handle the rest of the logic.
+        }
 
-    if (currentUser?.uid) {
-        try {
+        // This handles re-enrollment for an already logged-in user.
+        if (currentUser?.uid) {
             const result = await enrollFace({
                 studentPhotoDataUri: imageSrc,
                 studentId: currentUser.rollNo || currentUser.uid,
             });
 
             if (!result.success) {
-                throw new Error(result.message || "AI verification failed. Please try again with a clear photo.");
+                throw new Error(result.message || "AI verification failed. Please use a clearer photo with only your face visible.");
             }
 
             await updateDoc(doc(db, 'users', currentUser.uid), {
               faceDataUri: imageSrc
             });
+
             toast({
                 title: "Re-enrollment Successful!",
                 description: "Your new face data has been saved.",
             });
             setStatus('enrolled');
 
-        } catch (error: any) {
-            console.error("Re-enrollment failed:", error);
-            setStatus('enrollment_failed');
-            setEnrollmentMessage(error.message || "Could not save your new face data.");
-            toast({
-                variant: "destructive",
-                title: "Re-enrollment Failed",
-                description: error.message || "Could not save your new face data.",
-            });
+        } else {
+             throw new Error("User not found. Cannot complete enrollment.");
         }
+    } catch (error: any) {
+        console.error("Enrollment failed:", error);
+        setStatus('enrollment_failed');
+        const errorMessage = error.message || "An unexpected error occurred.";
+        setEnrollmentMessage(errorMessage);
+        toast({
+            variant: "destructive",
+            title: "Enrollment Failed",
+            description: errorMessage,
+        });
     }
   };
+
 
   const resetForReEnrollment = () => {
     setImageSrc(null);
