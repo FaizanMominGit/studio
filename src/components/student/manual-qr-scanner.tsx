@@ -14,16 +14,15 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>();
-  const streamRef = useRef<MediaStream | null>(null);
-
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Stop camera and animation frame loop
   const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
     }
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
@@ -49,16 +48,16 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
         inversionAttempts: 'dontInvert',
       });
 
-      if (code) {
+      if (code?.data) {
         try {
           const url = new URL(code.data);
-          // Simple validation to ensure it's a URL for this app
           if (url.origin === window.location.origin && url.pathname.includes('/attend') && url.searchParams.has('sessionId')) {
             stopCamera();
             onScanSuccess(code.data);
+            return; // Stop scanning
           }
         } catch (e) {
-          // Scanned data is not a valid URL, ignore.
+          // Scanned data is not a valid URL, ignore and continue scanning.
         }
       }
     }
@@ -75,22 +74,24 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-                streamRef.current = stream;
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
-                    // Wait for the video to start playing before scanning
-                    videoRef.current.oncanplay = () => {
+                    videoRef.current.onloadedmetadata = () => {
                         setIsLoading(false);
                         requestRef.current = requestAnimationFrame(tick);
                     };
                 }
-            } catch (error) {
+            } catch (error: any) {
                 console.error("Camera Error:", error);
-                setCameraError("Could not access the camera. Please check your browser permissions and ensure you are using a secure (HTTPS) connection.");
+                if(error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+                    setCameraError("Camera access denied. Please enable camera permissions in your browser settings.");
+                } else {
+                    setCameraError("Could not access the camera. It might be in use by another application.");
+                }
                 setIsLoading(false);
             }
         } else {
-            setCameraError("Your browser does not support camera access.");
+            setCameraError("Your browser does not support camera access. Please use a modern browser like Chrome or Firefox.");
             setIsLoading(false);
         }
     };
