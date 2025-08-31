@@ -14,22 +14,23 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
+} from "@/components/ui/dialog";
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
 import { FaceEnrollment } from '@/components/student/face-enrollment';
+import { useState } from 'react';
 
 const QrScanner = dynamic(() => import('@/components/student/qr-scanner').then(mod => mod.QrScanner), {
   ssr: false,
   loading: () => <div className="flex items-center justify-center h-48"><Loader2 className="h-8 w-8 animate-spin" /></div>
 });
 
-
 export default function StudentDashboard() {
   const router = useRouter();
+  const [isQrDialogOpen, setIsQrDialogOpen] = useState(false);
 
   const handleLogout = () => {
-    // In a real app, you would clear the session/token here
+    // In a real app, you would sign out from Firebase here
     router.push('/');
   };
 
@@ -55,7 +56,7 @@ export default function StudentDashboard() {
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <Dialog>
+                        <Dialog open={isQrDialogOpen} onOpenChange={setIsQrDialogOpen}>
                           <DialogTrigger asChild>
                             <Button size="lg" className="w-full font-semibold">
                               <QrCode className="mr-2 h-5 w-5" />
@@ -69,14 +70,14 @@ export default function StudentDashboard() {
                                 Position the QR code from the professor's screen inside the box.
                               </DialogDescription>
                             </DialogHeader>
-                            <QrScanner />
+                            {/* Render scanner only when dialog is open to ensure camera is requested correctly */}
+                            {isQrDialogOpen && <QrScanner onScanSuccess={() => setIsQrDialogOpen(false)} />}
                           </DialogContent>
                         </Dialog>
                     </CardContent>
                 </Card>
                  <FaceEnrollment />
             </div>
-
             <AttendanceHistory />
         </div>
       </main>
