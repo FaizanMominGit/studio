@@ -46,7 +46,38 @@ function AttendanceProcessor() {
     }
   }, []);
 
-  const handleSessionValidation = useCallback(async (user: AppUser) => {
+  // Effect for authenticating the user
+  useEffect(() => {
+    setStatus('authenticating');
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            const userDocRef = doc(db, 'users', user.uid);
+            const userDoc = await getDoc(userDocRef);
+
+            if (!userDoc.exists() || !userDoc.data().faceDataUri) {
+                setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
+                setStatus('error');
+            } else {
+                const appUser = { uid: user.uid, ...userDoc.data() } as AppUser;
+                setCurrentUser(appUser);
+            }
+        } else {
+            setErrorMessage('You must be logged in to mark attendance.');
+            setStatus('error');
+        }
+        setIsAuthChecked(true);
+    });
+    return () => {
+      unsubscribe();
+      stopCamera();
+    };
+  }, [stopCamera]);
+
+  // Effect for validating the session token *after* user is authenticated
+  useEffect(() => {
+    const handleSessionValidation = async () => {
+      if (!currentUser) return;
+
       setStatus('validating_token');
       setProgress(25);
       if (!sessionId || !token) {
@@ -74,36 +105,12 @@ function AttendanceProcessor() {
           setErrorMessage('Session not found.');
           setStatus('error');
       }
-  }, [sessionId, token]);
-
-
-  // Effect for authenticating and validating the token
-  useEffect(() => {
-    setStatus('authenticating');
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-        setIsAuthChecked(true); // Mark that the check is complete
-        if (user) {
-            const userDocRef = doc(db, 'users', user.uid);
-            const userDoc = await getDoc(userDocRef);
-
-            if (!userDoc.exists() || !userDoc.data().faceDataUri) {
-                setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
-                setStatus('error');
-                return;
-            }
-            const appUser = { uid: user.uid, ...userDoc.data() } as AppUser;
-            setCurrentUser(appUser);
-            await handleSessionValidation(appUser);
-        } else {
-            setErrorMessage('You must be logged in to mark attendance.');
-            setStatus('error');
-        }
-    });
-    return () => {
-      unsubscribe();
-      stopCamera();
     };
-  }, [handleSessionValidation, stopCamera]);
+    
+    if(isAuthChecked && currentUser) {
+        handleSessionValidation();
+    }
+  }, [isAuthChecked, currentUser, sessionId, token]);
 
 
   // Effect for managing the camera based on permissions
@@ -299,5 +306,3 @@ export default function AttendPage() {
         </Suspense>
     )
 }
-
-    
