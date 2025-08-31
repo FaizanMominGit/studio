@@ -5,13 +5,14 @@ import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, Camera, CheckCircle, XCircle, UserCheck } from 'lucide-react';
+import { Loader2, Camera, CheckCircle, XCircle, UserCheck, AlertTriangle } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { verifyFace } from '@/ai/flows/verify-face';
 import { auth, db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
 type AppUser = {
     uid: string;
@@ -21,19 +22,18 @@ type AppUser = {
     name: string;
 };
 
+type AttendanceStatus = 'initializing' | 'authenticating' | 'validating_session' | 'camera_loading' | 'ready_to_verify' | 'verifying' | 'success' | 'error';
+
 function AttendanceProcessor() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('sessionId');
   const token = searchParams.get('token');
   const { toast } = useToast();
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [statusMessage, setStatusMessage] = useState('Initializing...');
+  const [status, setStatus] = useState<AttendanceStatus>('initializing');
   const [errorMessage, setErrorMessage] = useState('');
-  
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [verificationResult, setVerificationResult] = useState<'success' | 'failure' | null>(null);
+  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -45,10 +45,9 @@ function AttendanceProcessor() {
       streamRef.current = null;
     }
   }, []);
-
+  
   useEffect(() => {
-    // This effect only handles authentication.
-    setStatusMessage('Authenticating...');
+    setStatus('authenticating');
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
         const userDocRef = doc(db, 'users', firebaseUser.uid);
@@ -56,12 +55,12 @@ function AttendanceProcessor() {
         if (userDoc.exists() && userDoc.data().faceDataUri) {
           setCurrentUser({ uid: firebaseUser.uid, ...userDoc.data() } as AppUser);
         } else {
-          setErrorMessage('You must be logged in and have an enrolled face to mark attendance.');
-          setIsLoading(false);
+          setErrorMessage('You must have an enrolled face to mark attendance. Please complete enrollment on your dashboard.');
+          setStatus('error');
         }
       } else {
         setErrorMessage('You must be logged in to mark attendance.');
-        setIsLoading(false);
+        setStatus('error');
       }
     });
 
@@ -72,65 +71,79 @@ function AttendanceProcessor() {
   }, [stopCamera]);
 
   useEffect(() => {
-    // This effect handles session validation and camera, but only runs when we have a user.
-    if (!currentUser) {
-      return;
-    }
+    if (!currentUser) return;
 
-    async function validateSessionAndStartCamera() {
-      setStatusMessage('Validating Session...');
+    async function validateSession() {
+      setStatus('validating_session');
       if (!sessionId || !token) {
         setErrorMessage('Invalid session link. Please scan a valid QR code.');
-        setIsLoading(false);
+        setStatus('error');
         return;
       }
-      
+
       try {
         const sessionDocRef = doc(db, 'sessions', sessionId);
         const sessionDoc = await getDoc(sessionDocRef);
 
         if (!sessionDoc.exists()) {
           setErrorMessage('Session not found.');
+          setStatus('error');
         } else {
           const sessionData = sessionDoc.data();
           if (!sessionData.active) {
             setErrorMessage('This session has already ended.');
+            setStatus('error');
           } else if (sessionData.qrToken !== token) {
             setErrorMessage('The QR code has expired. Please scan the new code.');
+            setStatus('error');
           } else {
-            // Session is valid, now start the camera
-            setStatusMessage('Initializing Camera...');
-            try {
-              const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-              streamRef.current = stream;
-              if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-              }
-            } catch (error) {
-              console.error('Error accessing camera:', error);
-              setErrorMessage('Camera access was denied. Please enable permissions in your browser settings.');
-            }
+            // All good, move to camera stage
+            setStatus('camera_loading');
           }
         }
       } catch (e: any) {
-        console.error("Error during session validation:", e);
-        setErrorMessage('An error occurred during initialization.');
-      } finally {
-        setIsLoading(false);
+        setErrorMessage('An error occurred during session validation.');
+        setStatus('error');
       }
     }
 
-    validateSessionAndStartCamera();
-
+    validateSession();
   }, [currentUser, sessionId, token]);
+  
+   useEffect(() => {
+    const startCamera = async () => {
+      if (status !== 'camera_loading') return;
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        setHasCameraPermission(true);
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setStatus('ready_to_verify');
+      } catch (error) {
+        console.error('Error accessing camera:', error);
+        setHasCameraPermission(false);
+        setErrorMessage('Camera access was denied. Please enable permissions in your browser settings.');
+        setStatus('error');
+      }
+    };
+
+    startCamera();
+
+    return () => {
+        // Ensure camera stops if component unmounts during this phase
+        stopCamera();
+    };
+    
+  }, [status, stopCamera]);
 
 
   const takePictureAndVerify = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || !currentUser || !sessionId) return;
 
-    setIsVerifying(true);
-    setStatusMessage('Verifying Identity...');
-
+    setStatus('verifying');
     const video = videoRef.current;
     const canvas = canvasRef.current;
     canvas.width = video.videoWidth;
@@ -138,10 +151,10 @@ function AttendanceProcessor() {
     const context = canvas.getContext('2d');
     if (!context) {
       setErrorMessage('Could not process video frame.');
-      setIsVerifying(false);
+      setStatus('error');
       return;
     }
-    
+
     context.translate(video.videoWidth, 0);
     context.scale(-1, 1);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -156,7 +169,7 @@ function AttendanceProcessor() {
       });
 
       if (result.isMatch && result.confidence > 0.8) {
-        try {
+         try {
           const sessionDocRef = doc(db, 'sessions', sessionId);
           const studentData = {
             uid: currentUser.uid,
@@ -182,42 +195,46 @@ function AttendanceProcessor() {
                 }),
               });
           }
-          setVerificationResult('success');
+          setStatus('success');
           toast({ title: 'Attendance Marked!', description: `Confidence: ${(result.confidence * 100).toFixed(2)}%` });
         } catch (dbError: any) {
             console.error("Database update failed:", dbError);
             setErrorMessage('Could not save attendance record. Please contact your professor.');
-            setVerificationResult('failure');
+            setStatus('error');
         }
       } else {
         setErrorMessage(result.reason || 'Verification failed. The faces did not match.');
-        setVerificationResult('failure');
+        setStatus('error');
       }
     } catch (e: any) {
       setErrorMessage(e.message || 'An unexpected error occurred during verification.');
-      setVerificationResult('failure');
-    } finally {
-        setIsVerifying(false);
+      setStatus('error');
     }
   }, [currentUser, sessionId, stopCamera, toast]);
   
   const renderContent = () => {
-    if (isLoading) {
-        return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">{statusMessage}</p></div>;
+    if (status === 'initializing' || status === 'authenticating' || status === 'validating_session' || status === 'camera_loading') {
+        const messages = {
+            initializing: 'Initializing...',
+            authenticating: 'Authenticating user...',
+            validating_session: 'Validating session...',
+            camera_loading: 'Starting camera...',
+        };
+        return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">{messages[status]}</p></div>;
     }
-    
-    if (errorMessage) {
-        return (
+
+    if (status === 'error') {
+      return (
           <div className="text-center">
             <XCircle className="h-16 w-16 mx-auto text-destructive" />
             <h2 className="text-2xl font-bold mt-4">Attendance Failed</h2>
             <p className="text-muted-foreground">{errorMessage}</p>
             <Button onClick={() => window.location.reload()} variant="outline" className="mt-4">Try Again</Button>
           </div>
-        );
+      );
     }
-
-    if (verificationResult === 'success') {
+    
+    if (status === 'success') {
        return (
           <div className="text-center">
             <CheckCircle className="h-16 w-16 mx-auto text-green-500" />
@@ -226,34 +243,48 @@ function AttendanceProcessor() {
           </div>
         );
     }
-    
-    if (verificationResult === 'failure') {
-         return (
-          <div className="text-center">
-            <XCircle className="h-16 w-16 mx-auto text-destructive" />
-            <h2 className="text-2xl font-bold mt-4">Attendance Failed</h2>
-            <p className="text-muted-foreground">{errorMessage || "An unknown error occurred."}</p>
-            <Button onClick={() => window.location.reload()} variant="outline" className="mt-4">Try Again</Button>
-          </div>
-        );
-    }
-    
+
     // Default camera view
     return (
         <div className="w-full text-center">
-            <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 border-primary`}>
+            <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 ${hasCameraPermission === false ? 'border-destructive' : 'border-primary'}`}>
                 <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
             </div>
-            <p className="mt-4 mb-4 text-muted-foreground text-sm">Position your face in the frame and take a picture to verify.</p>
-            <Button onClick={takePictureAndVerify} size="lg" disabled={isVerifying}>
-                {isVerifying ? <Loader2 className="mr-2 animate-spin"/> : <Camera className="mr-2"/>}
-                {isVerifying ? 'Verifying...' : 'Verify My Face'}
-            </Button>
+            
+            {hasCameraPermission === false ? (
+                 <Alert variant="destructive" className="mt-4 text-left">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Camera Access Denied</AlertTitle>
+                    <AlertDescription>
+                        Please enable camera permissions in your browser settings to verify your identity.
+                    </AlertDescription>
+                </Alert>
+            ) : (
+                <>
+                 <p className="mt-4 mb-4 text-muted-foreground text-sm">Position your face in the frame and take a picture to verify.</p>
+                <Button onClick={takePictureAndVerify} size="lg" disabled={status === 'verifying'}>
+                    {status === 'verifying' ? <Loader2 className="mr-2 animate-spin"/> : <Camera className="mr-2"/>}
+                    {status === 'verifying' ? 'Verifying...' : 'Verify My Face'}
+                </Button>
+                </>
+            )}
         </div>
     );
   };
   
-  const progressValue = verificationResult === 'success' ? 100 : (isVerifying ? 75 : (!isLoading && !errorMessage ? 50 : 25));
+  const getProgressValue = () => {
+    switch (status) {
+      case 'initializing': return 0;
+      case 'authenticating': return 20;
+      case 'validating_session': return 40;
+      case 'camera_loading': return 60;
+      case 'ready_to_verify': return 80;
+      case 'verifying': return 90;
+      case 'success': return 100;
+      case 'error': return 100;
+      default: return 0;
+    }
+  };
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
@@ -266,7 +297,7 @@ function AttendanceProcessor() {
             {renderContent()}
         </CardContent>
         <CardFooter className="flex flex-col">
-          <Progress value={progressValue} className="w-full h-2 rounded-b-lg" />
+          <Progress value={getProgressValue()} className={`w-full h-2 rounded-b-lg ${status === 'error' ? '[&>div]:bg-destructive' : ''}`} />
           <canvas ref={canvasRef} className="hidden" />
         </CardFooter>
       </Card>
@@ -282,4 +313,4 @@ export default function AttendPage() {
     )
 }
 
-    
+  
