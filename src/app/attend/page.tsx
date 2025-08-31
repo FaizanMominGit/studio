@@ -158,7 +158,7 @@ function AttendanceProcessor() {
     context.translate(video.videoWidth, 0);
     context.scale(-1, 1);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg');
+    const dataUrl = canvas.toDataURL('image/png');
     stopCamera();
 
     try {
@@ -312,5 +312,3 @@ export default function AttendPage() {
         </Suspense>
     )
 }
-
-  
