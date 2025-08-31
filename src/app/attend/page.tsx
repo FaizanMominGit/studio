@@ -30,10 +30,10 @@ function AttendancePageContent() {
   const { toast } = useToast();
 
   const [isLoading, setIsLoading] = useState(true);
-  const [statusMessage, setStatusMessage] = useState('Authenticating...');
+  const [statusMessage, setStatusMessage] = useState('Initializing...');
   const [errorMessage, setErrorMessage] = useState('');
   
-  const [user, setUser] = useState<AppUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [sessionValid, setSessionValid] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<'success' | 'failure' | null>(null);
@@ -51,12 +51,13 @@ function AttendancePageContent() {
 
   // Step 1: Authenticate the user
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    setStatusMessage('Authenticating...');
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
         const userDocRef = doc(db, 'users', firebaseUser.uid);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists() && userDoc.data().faceDataUri) {
-          setUser({ uid: firebaseUser.uid, ...userDoc.data() } as AppUser);
+          setCurrentUser({ uid: firebaseUser.uid, ...userDoc.data() } as AppUser);
         } else {
           setErrorMessage('You must be logged in and have an enrolled face to mark attendance.');
           setIsLoading(false);
@@ -75,13 +76,7 @@ function AttendancePageContent() {
 
   // Step 2: Validate the session, only after user is authenticated
   useEffect(() => {
-    if (!user) {
-        // Wait for user authentication to complete
-        if (!isLoading && !errorMessage) {
-            setStatusMessage('Authenticating...');
-        }
-        return;
-    }
+    if (!currentUser) return; // Wait for user authentication to complete
     
     setStatusMessage('Validating Session...');
 
@@ -93,31 +88,37 @@ function AttendancePageContent() {
         return;
       }
 
-      const sessionDocRef = doc(db, 'sessions', sessionId);
-      const sessionDoc = await getDoc(sessionDocRef);
+      try {
+        const sessionDocRef = doc(db, 'sessions', sessionId);
+        const sessionDoc = await getDoc(sessionDocRef);
 
-      if (!sessionDoc.exists()) {
-        setErrorMessage('Session not found.');
-      } else {
-        const sessionData = sessionDoc.data();
-        if (!sessionData.active) {
-          setErrorMessage('This session has already ended.');
-        } else if (sessionData.qrToken !== token) {
-          setErrorMessage('The QR code has expired. Please scan the new code.');
+        if (!sessionDoc.exists()) {
+          setErrorMessage('Session not found.');
         } else {
-          setSessionValid(true);
+          const sessionData = sessionDoc.data();
+          if (!sessionData.active) {
+            setErrorMessage('This session has already ended.');
+          } else if (sessionData.qrToken !== token) {
+            setErrorMessage('The QR code has expired. Please scan the new code.');
+          } else {
+            setSessionValid(true);
+          }
         }
+      } catch (e: any) {
+        setErrorMessage('An error occurred while validating the session.');
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     validateSession();
-  }, [user, sessionId, token, isLoading, errorMessage]);
+  }, [currentUser, sessionId, token]);
 
   // Step 3: Initialize camera, only after session is validated
   useEffect(() => {
-    if (!sessionValid || hasCameraPermission) return;
+    if (!sessionValid) return;
 
+    setStatusMessage('Initializing Camera...');
     const getCameraPermission = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -137,10 +138,10 @@ function AttendancePageContent() {
     return () => {
       stopCamera();
     };
-  }, [sessionValid, hasCameraPermission, stopCamera]);
+  }, [sessionValid, stopCamera]);
 
   const takePictureAndVerify = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || !user || !sessionValid) return;
+    if (!videoRef.current || !canvasRef.current || !currentUser || !sessionValid) return;
 
     setIsVerifying(true);
     setStatusMessage('Verifying Identity...');
@@ -165,54 +166,44 @@ function AttendancePageContent() {
     try {
       const result = await verifyFace({
         livePhotoDataUri: dataUrl,
-        enrolledFaceDataUri: user.faceDataUri,
-        studentName: user.name || user.email,
+        enrolledFaceDataUri: currentUser.faceDataUri,
+        studentName: currentUser.name || currentUser.email,
       });
 
       if (result.isMatch && result.confidence > 0.8) {
-        toast({ title: 'Attendance Marked!', description: `Confidence: ${(result.confidence * 100).toFixed(2)}%` });
-        
         try {
             if (sessionId) {
               const sessionDocRef = doc(db, 'sessions', sessionId);
               const studentData = {
-                uid: user.uid,
-                email: user.email,
-                name: user.name || user.email.split('@')[0],
-                rollNo: user.rollNo || 'N/A',
+                uid: currentUser.uid,
+                email: currentUser.email,
+                name: currentUser.name || currentUser.email.split('@')[0],
+                rollNo: currentUser.rollNo || 'N/A',
                 checkInTime: new Date().toISOString(),
                 verificationPhoto: dataUrl,
               };
 
+              await updateDoc(sessionDocRef, { attendedStudents: arrayUnion(studentData) });
+
+              const userDocRef = doc(db, 'users', currentUser.uid);
               const sessionDoc = await getDoc(sessionDocRef);
               if (sessionDoc.exists()) {
-                const attendedStudents = sessionDoc.data()?.attendedStudents || [];
-                if (!attendedStudents.some((s: any) => s.uid === user.uid)) {
-                  await updateDoc(sessionDocRef, { attendedStudents: arrayUnion(studentData) });
-                }
-
-                const userDocRef = doc(db, 'users', user.uid);
-                const sessionDetails = sessionDoc.data();
-                const userDoc = await getDoc(userDocRef);
-                if (userDoc.exists()) {
-                  const userAttendanceHistory = userDoc.data()?.attendanceHistory || [];
-                  if (!userAttendanceHistory.some((h: any) => h.sessionId === sessionId)) {
-                    await updateDoc(userDocRef, {
-                      attendanceHistory: arrayUnion({
-                        sessionId,
-                        subject: sessionDetails?.subject || 'Unknown Subject',
-                        date: sessionDetails?.lectureDate || new Date().toISOString(),
-                        status: 'Present',
-                      }),
-                    });
-                  }
-                }
+                 const sessionDetails = sessionDoc.data();
+                 await updateDoc(userDocRef, {
+                    attendanceHistory: arrayUnion({
+                      sessionId,
+                      subject: sessionDetails?.subject || 'Unknown Subject',
+                      date: sessionDetails?.lectureDate || new Date().toISOString(),
+                      status: 'Present',
+                    }),
+                 });
               }
             }
             setVerificationResult('success');
+            toast({ title: 'Attendance Marked!', description: `Confidence: ${(result.confidence * 100).toFixed(2)}%` });
         } catch (dbError: any) {
             console.error("Database update failed:", dbError);
-            setErrorMessage('Could not save attendance record to the database. Please contact your professor.');
+            setErrorMessage('Could not save attendance record. Please contact your professor.');
             setVerificationResult('failure');
         }
       } else {
@@ -225,9 +216,9 @@ function AttendancePageContent() {
     } finally {
         setIsVerifying(false);
     }
-  }, [user, sessionId, sessionValid, stopCamera, toast]);
+  }, [currentUser, sessionId, sessionValid, stopCamera, toast]);
   
-  const renderContent = () => {
+  const renderStatus = () => {
     if (isLoading || isVerifying) {
         return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">{statusMessage}</p></div>;
     }
@@ -258,26 +249,28 @@ function AttendancePageContent() {
           <div className="text-center">
             <XCircle className="h-16 w-16 mx-auto text-destructive" />
             <h2 className="text-2xl font-bold mt-4">Attendance Failed</h2>
-            <p className="text-muted-foreground">{errorMessage}</p>
+            <p className="text-muted-foreground">{errorMessage || "An unknown error occurred."}</p>
             <Button onClick={() => window.location.reload()} variant="outline" className="mt-4">Try Again</Button>
           </div>
         );
     }
-
-    if (sessionValid && hasCameraPermission) {
-        return (
-            <div className="text-center">
-                <p className="mb-4 text-muted-foreground text-sm">Position your face in the frame and take a picture to verify.</p>
-                <Button onClick={takePictureAndVerify} size="lg"><Camera className="mr-2"/> Verify My Face</Button>
-            </div>
-        );
-    }
     
+    if (hasCameraPermission === false) {
+      return (
+           <Alert variant="destructive">
+               <AlertTitle>Camera Access Denied</AlertTitle>
+               <AlertDescription>
+                   Please enable camera permissions in your browser settings to continue.
+               </AlertDescription>
+           </Alert>
+      );
+    }
+
     return null;
   };
   
-  const showVideo = sessionValid && hasCameraPermission && !isVerifying && !verificationResult;
-  const progressValue = verificationResult === 'success' ? 100 : (isVerifying ? 75 : (sessionValid ? 50 : (user ? 25 : 0)));
+  const showVideo = sessionValid && hasCameraPermission && !isVerifying && !verificationResult && !isLoading && !errorMessage;
+  const progressValue = verificationResult === 'success' ? 100 : (isVerifying ? 75 : (sessionValid ? 50 : (currentUser ? 25 : 0)));
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
@@ -289,19 +282,15 @@ function AttendancePageContent() {
         <CardContent className="min-h-[400px] flex flex-col items-center justify-center space-y-4">
             <div className={`w-full max-w-sm aspect-square rounded-full bg-secondary mx-auto flex items-center justify-center overflow-hidden border-4 ${showVideo ? 'border-primary' : 'border-transparent'}`}>
                 <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${!showVideo ? 'hidden' : ''}`} />
-                {!showVideo && renderContent()}
+                {!showVideo && renderStatus()}
             </div>
-
-            {hasCameraPermission === false && (
-                 <Alert variant="destructive">
-                     <AlertTitle>Camera Access Denied</AlertTitle>
-                     <AlertDescription>
-                         Please enable camera permissions in your browser settings to continue.
-                     </AlertDescription>
-                 </Alert>
+            
+            {showVideo && (
+              <div className="text-center">
+                  <p className="mb-4 text-muted-foreground text-sm">Position your face in the frame and take a picture to verify.</p>
+                  <Button onClick={takePictureAndVerify} size="lg" disabled={isVerifying}><Camera className="mr-2"/> Verify My Face</Button>
+              </div>
             )}
-
-            {showVideo && <div className="pt-4">{renderContent()}</div>}
         </CardContent>
         <CardFooter className="flex flex-col">
           <Progress value={progressValue} className="w-full h-2 rounded-b-lg" />
@@ -319,3 +308,5 @@ export default function AttendPage() {
         </Suspense>
     )
 }
+
+    
