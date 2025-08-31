@@ -15,7 +15,7 @@ import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
-type AttendanceStatus = 'idle' | 'loading_user' | 'validating_token' | 'ready_to_verify' | 'verifying' | 'verified_ok' | 'verified_fail' | 'error';
+type AttendanceStatus = 'idle' | 'authenticating' | 'validating_token' | 'ready_to_verify' | 'verifying' | 'verified_ok' | 'verified_fail' | 'error';
 type AppUser = {
     uid: string;
     email: string;
@@ -37,6 +37,7 @@ function AttendanceProcessor() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+  const [isAuthChecked, setIsAuthChecked] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (videoRef.current && videoRef.current.srcObject) {
@@ -78,10 +79,10 @@ function AttendanceProcessor() {
 
   // Effect for authenticating and validating the token
   useEffect(() => {
+    setStatus('authenticating');
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        setIsAuthChecked(true); // Mark that the check is complete
         if (user) {
-            setStatus('loading_user');
-            setProgress(10);
             const userDocRef = doc(db, 'users', user.uid);
             const userDoc = await getDoc(userDocRef);
 
@@ -94,11 +95,8 @@ function AttendanceProcessor() {
             setCurrentUser(appUser);
             await handleSessionValidation(appUser);
         } else {
-             // This might briefly be null on initial load, so we wait for auth state to be confirmed
-             if(auth.currentUser === null) {
-                setErrorMessage('You must be logged in to mark attendance.');
-                setStatus('error');
-             }
+            setErrorMessage('You must be logged in to mark attendance.');
+            setStatus('error');
         }
     });
     return () => {
@@ -128,14 +126,16 @@ function AttendanceProcessor() {
       }
     };
 
-    enableCamera();
+    if (status === 'ready_to_verify') {
+        enableCamera();
+    }
 
     return () => {
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
     };
-  }, [toast]);
+  }, [toast, status]);
 
 
   const takePictureAndVerify = useCallback(async () => {
@@ -218,10 +218,10 @@ function AttendanceProcessor() {
   }, [stopCamera, toast, currentUser, sessionId]);
 
   const renderStatusInfo = () => {
-    switch (status) {
-      case 'idle':
-      case 'loading_user':
+    if (!isAuthChecked || status === 'authenticating' || status === 'idle') {
          return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Authenticating...</p></div>;
+    }
+    switch (status) {
       case 'validating_token':
          return <div className="text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" /><p className="mt-4">Validating QR Code...</p></div>;
       case 'ready_to_verify':
@@ -271,7 +271,7 @@ function AttendanceProcessor() {
                 {!showVideo && renderStatusInfo()}
             </div>
 
-            {hasCameraPermission === false && (
+            {hasCameraPermission === false && status === 'ready_to_verify' && (
                  <Alert variant="destructive">
                      <AlertTitle>Camera Access Denied</AlertTitle>
                      <AlertDescription>
