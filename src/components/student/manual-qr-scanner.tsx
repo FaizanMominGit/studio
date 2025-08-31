@@ -14,15 +14,15 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>();
+  const streamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Stop camera and animation frame loop
   const stopCamera = useCallback(() => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
@@ -52,6 +52,7 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
         try {
           const url = new URL(code.data);
           if (url.origin === window.location.origin && url.pathname.includes('/attend') && url.searchParams.has('sessionId')) {
+            // Forcefully stop the camera BEFORE navigating away.
             stopCamera();
             onScanSuccess(code.data);
             return; // Stop scanning
@@ -74,6 +75,7 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                streamRef.current = stream;
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
                     videoRef.current.onloadedmetadata = () => {
