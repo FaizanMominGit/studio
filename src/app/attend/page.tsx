@@ -24,7 +24,8 @@ type AppUser = {
     name: string;
 };
 
-function AttendanceProcessor() {
+
+function AttendancePageContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('sessionId');
   const token = searchParams.get('token');
@@ -47,16 +48,13 @@ function AttendanceProcessor() {
 
   // Effect for authenticating the user
   useEffect(() => {
-    console.log("Starting authentication check...");
     setStatus('authenticating');
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
         if (user) {
-            console.log("onAuthStateChanged: User found", user);
             const userDocRef = doc(db, 'users', user.uid);
             const userDoc = await getDoc(userDocRef);
 
             if (!userDoc.exists() || !userDoc.data().faceDataUri) {
-                console.error("User document or face data is missing.");
                 setErrorMessage('You have not enrolled your face. Please enroll from your dashboard.');
                 setStatus('error');
             } else {
@@ -64,14 +62,12 @@ function AttendanceProcessor() {
                 setCurrentUser(appUser);
             }
         } else {
-            console.log("onAuthStateChanged: No user found.");
             setErrorMessage('You must be logged in to mark attendance.');
             setStatus('error');
             setCurrentUser(null);
         }
     });
     return () => {
-      console.log("Cleaning up auth listener.");
       unsubscribe();
       stopCamera();
     };
@@ -80,19 +76,17 @@ function AttendanceProcessor() {
   // Effect for validating the session token *after* user is authenticated
   useEffect(() => {
     const handleSessionValidation = async () => {
-      console.log("Running session validation. Current user:", currentUser);
       if (!currentUser) {
-        // This will now wait until currentUser is set by the other effect.
-        // If it runs and currentUser is null, it means onAuthStateChanged finished and found no user.
-        console.log("Session validation skipped: No current user.");
+        if(status !== 'authenticating' && status !== 'idle'){
+           setErrorMessage('You must be logged in to mark attendance.');
+           setStatus('error');
+        }
         return;
       };
 
-      console.log("Proceeding with session validation...");
       setStatus('validating_token');
       setProgress(25);
       if (!sessionId || !token) {
-          console.error("Session ID or token is missing.");
           setErrorMessage('Invalid session or QR code. Please scan a valid, live QR code.');
           setStatus('error');
           return;
@@ -104,29 +98,22 @@ function AttendanceProcessor() {
       if (sessionDoc.exists()) {
           const sessionData = sessionDoc.data();
           if (!sessionData.active) {
-              console.error("Session is not active.");
               setErrorMessage('This session has already ended.');
               setStatus('error');
           } else if (sessionData.qrToken !== token) {
-              console.error("QR token mismatch.");
               setErrorMessage('The QR code has expired. Please scan the new code from the screen.');
               setStatus('error');
           } else {
-              console.log("Session validated successfully.");
               setStatus('ready_to_verify');
               setProgress(50);
           }
       } else {
-          console.error("Session document not found.");
           setErrorMessage('Session not found.');
           setStatus('error');
       }
     };
     
-    // This effect now depends on `currentUser`. It will re-run when currentUser changes from null to a user object.
-    if(status !== 'error') {
-        handleSessionValidation();
-    }
+    handleSessionValidation();
     
   }, [currentUser, sessionId, token, status]);
 
@@ -137,9 +124,7 @@ function AttendanceProcessor() {
 
     const enableCamera = async () => {
       try {
-        console.log("Requesting camera permission...");
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-        console.log("Camera permission granted.");
         setHasCameraPermission(true);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -159,7 +144,6 @@ function AttendanceProcessor() {
 
     return () => {
       if (stream) {
-        console.log("Stopping camera stream.");
         stream.getTracks().forEach(track => track.stop());
       }
     };
@@ -323,7 +307,7 @@ function AttendanceProcessor() {
 export default function AttendPage() {
     return (
         <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><Loader2 className="h-12 w-12 animate-spin"/></div>}>
-            <AttendanceProcessor />
+            <AttendancePageContent />
         </Suspense>
     )
 }
