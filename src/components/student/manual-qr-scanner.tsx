@@ -20,12 +20,12 @@ export function ManualQrScanner({ onScanSuccess }: ManualQrScannerProps) {
 
   // Stop camera and animation frame loop
   const stopCamera = useCallback(() => {
+    if (requestRef.current) {
+      cancelAnimationFrame(requestRef.current);
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
-    }
-    if (requestRef.current) {
-      cancelAnimationFrame(requestRef.current);
     }
   }, []);
 
